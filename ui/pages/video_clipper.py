@@ -3,6 +3,11 @@ Video Clipper Page - threaded export with real-time progress
 """
 import os
 import subprocess
+
+_CREATION_FLAGS = 0
+if os.name == "nt":
+    _CREATION_FLAGS = 0x08000000  # CREATE_NO_WINDOW
+
 import time
 
 from PyQt6.QtWidgets import (
@@ -48,7 +53,8 @@ def _find_ffmpeg():
         try:
             r = subprocess.run(
                 [name, "-version"],
-                capture_output=True, timeout=5)
+                capture_output=True, timeout=5,
+                creationflags=_CREATION_FLAGS)
             if r.returncode == 0:
                 return name
         except Exception:
@@ -68,7 +74,8 @@ def _find_ffprobe():
         try:
             r = subprocess.run(
                 [name, "-version"],
-                capture_output=True, timeout=5)
+                capture_output=True, timeout=5,
+                creationflags=_CREATION_FLAGS)
             if r.returncode == 0:
                 return name
         except Exception:
@@ -104,7 +111,8 @@ class _DurationLoader(QThread):
                  "default=noprint_wrappers=1:nokey=1",
                  self._p],
                 capture_output=True, timeout=15,
-                encoding="utf-8", errors="replace")
+                encoding="utf-8", errors="replace",
+                creationflags=_CREATION_FLAGS)
             if r.returncode == 0 and r.stdout.strip():
                 d = float(
                     r.stdout.strip().split("\n")[0])
@@ -196,7 +204,8 @@ class _ExportWorker(QThread):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 encoding="utf-8",
-                errors="replace")
+                errors="replace",
+                creationflags=_CREATION_FLAGS)
         except Exception as ex:
             print("FFmpeg launch failed:", ex)
             return False

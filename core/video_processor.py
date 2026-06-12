@@ -3,6 +3,12 @@ Video Processor - FFmpeg based
 """
 import os
 import subprocess
+
+# Hide console window on Windows
+_CREATION_FLAGS = 0
+if hasattr(subprocess, "CREATE_NO_WINDOW"):
+    _CREATION_FLAGS = subprocess.CREATE_NO_WINDOW
+
 import tempfile
 from pathlib import Path
 
@@ -50,6 +56,7 @@ class VideoProcessor:
                 [self.ffmpeg_path, "-version"],
                 capture_output=True, timeout=5,
                 encoding="utf-8", errors="replace",
+                creationflags=_CREATION_FLAGS,
             )
             if result.returncode != 0:
                 raise RuntimeError("FFmpeg failed")
@@ -216,6 +223,7 @@ class VideoProcessor:
             timeout=600,
             encoding="utf-8",
             errors="replace",
+            creationflags=_CREATION_FLAGS,
         )
         if result.returncode != 0:
             error_msg = result.stderr[-500:] if result.stderr else "Unknown"
