@@ -70,22 +70,22 @@ python main.py
 
 ## 快速开始 / Quick Start
 
-1. 首次运行 — 程序会自动检测 Steam ID、CS2 路径、FFmpeg，未找到的可在设置中手动配置
+1. 首次运行 — 程序会自动检测 Steam ID、CS2 路径、FFmpeg，未找到的可在设置中手动配置 / 
 First run — Auto-detects Steam ID, CS2 path, FFmpeg; missing items can be manually configured in Settings.
 
-2. 安装 GSI — 在设置 → GSI 页签，点击“安装 GSI 配置文件”，然后重启 CS2
+2. 安装 GSI — 在设置 → GSI 页签，点击“安装 GSI 配置文件”，然后重启 CS2 / 
 Install GSI — In Settings → GSI tab, click “Install GSI config file”, then restart CS2.
 
-3. 连接 OBS — 在设置 → OBS 页签，填入 WebSocket 端口和密码，点击“测试连接”
+3. 连接 OBS — 在设置 → OBS 页签，填入 WebSocket 端口和密码，点击“测试连接” / 
 Connect OBS — In Settings → OBS tab, enter WebSocket port and password, click “Test Connection”.
 
-4. 开启自动录制 — 在设置 → 常规页签，勾选“比赛开始时自动开始录制”
+4. 开启自动录制 — 在设置 → 常规页签，勾选“比赛开始时自动开始录制” / 
 Enable auto-recording — In Settings → General tab, check “Auto-start recording when match begins”.
 
-5. 解析 Demo — 在 Demo 库页面，拖入 .dem 文件或点击浏览选择
+5. 解析 Demo — 在 Demo 库页面，拖入 .dem 文件或点击浏览选择 / 
 Parse Demo — In Demo Library page, drag & drop .dem file or click browse to select.
 
-6.导出高光 — 检测完成后，在集锦编辑页面调整参数，点击导出
+6. 导出高光 — 检测完成后，在集锦编辑页面调整参数，点击导出 / 
 Export highlights — After detection, adjust parameters in Highlight Editor page, click Export.
 
 ---
@@ -148,13 +148,13 @@ CS2-Highlight-Studio/
 
 ## GSI 配置 / GSI Configuration
 
-程序会自动安装 GSI 配置文件到 CS2 目录。如果自动安装失败，手动操作：
+程序会自动安装 GSI 配置文件到 CS2 目录。如果自动安装失败，手动操作： / 
 The program auto-installs GSI config file to CS2 directory. If auto-install fails, do manually:
 
-1. 将以下内容保存为 gamestate_integration_cs2highlight.cfg
+1. 将以下内容保存为 gamestate_integration_cs2highlight.cfg / 
 Save the following content as gamestate_integration_cs2highlight.cfg
 
-2. 放入 CS2 安装目录的 game/csgo/cfg 或 game/cs2/cfg 文件夹
+2. 放入 CS2 安装目录的 game/csgo/cfg 或 game/cs2/cfg 文件夹 / 
 Place it in CS2 installation directory under game/csgo/cfg or game/cs2/cfg
 
 3. 重启 CS2 / Restart CS2
@@ -185,23 +185,23 @@ Place it in CS2 installation directory under game/csgo/cfg or game/cs2/cfg
 ## 常见问题 / FAQ
 
 **Q: OBS 连接失败？ / OBS connection failed?**  
-A: 确认 OBS 已启用 WebSocket 服务器（工具 → WebSocket 服务器设置 → 启动服务器），端口和密码与设置中一致。  
+A: 确认 OBS 已启用 WebSocket 服务器（工具 → WebSocket 服务器设置 → 启动服务器），端口和密码与设置中一致。  /
    Make sure OBS WebSocket server is enabled (Tools → WebSocket Server Settings → Start Server) and port/password match settings.
 
 **Q: GSI 未连接？ / GSI not connected?**  
-A: 确认 GSI 配置文件已安装到正确目录，且 CS2 已重启。程序底部状态栏会显示 GSI 连接状态。  
+A: 确认 GSI 配置文件已安装到正确目录，且 CS2 已重启。程序底部状态栏会显示 GSI 连接状态。  /
    Verify GSI config file is installed in the correct directory and CS2 is restarted. The status bar shows GSI connection state.
 
 **Q: 导出视频很慢？ / Export slow?**  
-A: 程序默认使用流复制模式（`-c copy`），不重编码，速度很快。如果仍然慢，检查 FFmpeg 是否正确安装。  
+A: 程序默认使用流复制模式（`-c copy`），不重编码，速度很快。如果仍然慢，检查 FFmpeg 是否正确安装。  /
    The program uses stream copy mode (`-c copy`) by default, no re-encoding, very fast. If still slow, check FFmpeg installation.
 
 **Q: Demo 解析失败？ / Demo parsing failed?**  
-A: 确认 Steam ID 已正确填写（可在设置中点击“自动识别”），Demo 文件完整未损坏。  
+A: 确认 Steam ID 已正确填写（可在设置中点击“自动识别”），Demo 文件完整未损坏。  /
    Make sure Steam ID is correct (click “Auto-detect” in Settings), and the demo file is not corrupted.
 
 **Q: 快捷键不响应？ / Hotkeys not working?**  
-A: 确认在设置 → 常规中勾选了“启用快捷键”，且快捷键未与其他软件冲突。  
+A: 确认在设置 → 常规中勾选了“启用快捷键”，且快捷键未与其他软件冲突。  /
    Check “Enable hotkeys” in Settings → General tab, and ensure no conflict with other software.
 
 ---
