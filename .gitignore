@@ -1,28 +1,16 @@
-# Python
 __pycache__/
 *.pyc
 *.pyd
-*.egg-info/
+*.spec
 dist/
 build/
-*.spec
-
-# Virtual env
-venv/
-.venv/
-env/
-
-# IDE
+data/
+cache/
+logs/
+output/
+temp/
+*.json
 .vscode/
 .idea/
-
-# Settings data
-*.json
-!config/default_settings.json
-
-# Logs
-*.log
-
-# Temp files
-*.tmp
 *.bak
+*.tmp
