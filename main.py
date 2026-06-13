@@ -3,6 +3,13 @@ CS2 Highlight Studio v1.0.260612
 """
 import sys
 import os
+import ctypes
+
+if sys.platform == "win32":
+    kernel32 = ctypes.windll.kernel32
+    hwnd = kernel32.GetConsoleWindow()
+    if hwnd:
+        kernel32.ShowWindow(hwnd, 0)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
@@ -36,11 +43,16 @@ def main():
     from ui.theme import get_stylesheet
     app.setStyleSheet(get_stylesheet())
 
-    # ── Show splash ──
+    # ── Splash ──
     from ui.splash import AppSplash
     splash = AppSplash()
     splash.show()
 
+    # ── Check dependencies ──
+    splash.update(5, "\u68c0\u67e5\u4f9d\u8d56...")
+    splash.check_dependencies()
+
+    # ── Settings ──
     from config.settings import AppSettings
     from core.translations import set_lang, t
 
@@ -48,47 +60,42 @@ def main():
     set_lang(settings.get("language", "zh"))
     app.setApplicationName(t("app_name"))
 
-    splash.update(10, "\u52a0\u8f7d\u8bbe\u7f6e...")
+    splash.update(25, "\u52a0\u8f7d\u8bbe\u7f6e...")
 
-    # ── Create services ──
+    # ── Services ──
     from core.obs_controller import OBSController
     from core.gsi_server import GSIServer
     from core.match_watcher import MatchWatcher
 
-    splash.update(25, "\u521d\u59cb\u5316 OBS...",
-                  "obs-websocket-python")
+    splash.update(40, "\u521d\u59cb\u5316 OBS...")
     obs = OBSController(settings)
 
-    splash.update(40, "\u521d\u59cb\u5316 GSI...",
-                  "gamestate_integration")
+    splash.update(55, "\u521d\u59cb\u5316 GSI...")
     gsi = GSIServer(settings)
 
-    splash.update(55, "\u521d\u59cb\u5316 Watcher...",
-                  "match_watcher")
+    splash.update(65, "\u521d\u59cb\u5316 Watcher...")
     watcher = MatchWatcher(settings)
 
-    # ── Create main window ──
+    # ── Window ──
     from ui.main_window import MainWindow
 
-    splash.update(70, "\u52a0\u8f7d\u754c\u9762...",
-                  "PyQt6")
+    splash.update(75, "\u52a0\u8f7d\u754c\u9762...")
     window = MainWindow(settings, obs, gsi, watcher)
 
-    splash.update(85, "\u8fde\u63a5 GSI \u670d\u52a1...")
+    splash.update(85, "\u8fde\u63a5 GSI...")
     if settings.get("gsi_auto_start", True):
         try:
             gsi.start()
-        except Exception as e:
-            print("GSI error:", e)
+        except Exception:
+            pass
 
-    splash.update(95, "\u8fde\u63a5 OBS WebSocket...")
+    splash.update(92, "\u8fde\u63a5 OBS...")
     if settings.get("obs_auto_connect", True):
         try:
             obs.connect()
-        except Exception as e:
-            print("OBS error:", e)
+        except Exception:
+            pass
 
-    # ── Show window ──
     splash.update(100, "\u52a0\u8f7d\u5b8c\u6210!",
                   "\u51c6\u5907\u5c31\u7eea")
     window.show()
