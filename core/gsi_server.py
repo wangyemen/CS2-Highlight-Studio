@@ -32,9 +32,9 @@ class GameState:
     match_started: bool = False
     match_ended: bool = False
     warmup_ended: bool = False
+    match_number: int = 0
     last_event: dict = field(default_factory=dict)
     event_history: list = field(default_factory=list)
-
 
 class GSIServer:
 
@@ -198,8 +198,8 @@ class GSIServer:
 
             # Round number from map (fallback)
             map_rnd = gmap.get("round")
-            if isinstance(map_rnd, int) and map_rnd > 0:
-                self.state.round_num = map_rnd
+            if isinstance(map_rnd, int) and map_rnd >= 0:
+                self.state.round_num = map_rnd + 1
 
             # warmup → live = first round started
             if old_map_phase == "warmup" and new_phase == "live":
@@ -214,6 +214,7 @@ class GSIServer:
                 self.state.match_started = True
                 self.state.match_ended = False
                 self.state.warmup_ended = False
+                self.state.match_number += 1
 
         # ── Round (primary source for round number) ──
         rnd = data.get("round", {})
@@ -222,8 +223,8 @@ class GSIServer:
             if rp:
                 self.state.round_phase = rp
             rn = rnd.get("round")
-            if isinstance(rn, int) and rn > 0:
-                self.state.round_num = rn
+            if isinstance(rn, int) and rn >= 0:
+                self.state.round_num = rn + 1
             bs = rnd.get("bomb", "")
             if bs:
                 self.state.bomb_state = bs
