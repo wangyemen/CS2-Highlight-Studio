@@ -48,29 +48,7 @@ class MainWindow(QMainWindow):
         self._auto_started = False
         self._auto_stopped = False
         self._processed_match = False
-
-        self._match_history = MatchHistory()
-
-        self._init_ui()
-        self._connect_signals()
-        self._start_services()
-        
-    def __init__(self, settings, obs, gsi, watcher):
-        super().__init__()
-        self.settings = settings
-        self.obs = obs
-        self.gsi = gsi
-        self.watcher = watcher
-
-        self._current_match = None
-        self._current_highlights = []
-        self._current_source_video = ""
-        self._current_match_id = None
-        self._current_match_folder = ""
-
-        self._auto_started = False
-        self._auto_stopped = False
-        self._processed_match = False
+        self._last_recorded_match = 0
 
         self._match_history = MatchHistory()
 
@@ -78,7 +56,6 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self._start_services()
         self._init_tray()
-
 
     # ═══════════════════════════════════════
     #  UI init
@@ -113,6 +90,7 @@ class MainWindow(QMainWindow):
         self.page_stack.setStyleSheet("background: #060a10;")
 
         self.dashboard_page = DashboardPage(self.settings)
+        self.dashboard_page.set_controllers(self.obs, self.gsi)
         self.demo_page = DemoBrowserPage(self.settings)
         self.editor_page = HighlightEditorPage(self.settings)
         self.history_page = MatchHistoryPage(
@@ -278,30 +256,31 @@ class MainWindow(QMainWindow):
     def _on_detect_done(self, highlights):
         self._current_highlights = highlights
 
+        all_players = []
         if self._current_match:
+            for ps in self._current_match.player_stats_a:
+                all_players.append(ps["name"])
+            for ps in self._current_match.player_stats_b:
+                all_players.append(ps["name"])
+
             output_dir = (self.settings.get("output_dir", "")
                           if self.settings else "")
             record = self._match_history.add_match(
                 self._current_match, highlights,
                 output_dir=output_dir)
             self._current_match_id = record["id"]
-            self._current_match_folder = record.get(
-                "output_dir", "")
+            self._current_match_folder = record.get("output_dir", "")
 
         self.editor_page.set_highlights(
-            highlights, self._current_source_video)
-        self.editor_page.set_match_folder(
-            self._current_match_folder)
+            highlights, self._current_source_video, all_players)
+        self.editor_page.set_match_folder(self._current_match_folder)
 
-        self.dashboard_page.highlights_card.set_value(
-            str(len(highlights)))
+        self.dashboard_page.highlights_card.set_value(str(len(highlights)))
 
         self.sidebar._on_nav(2)
-        self.toast.show_message(
-            "检测到 {} 个高光片段".format(len(highlights)))
-        self.header_status.setText(
-            "检测完成 | {} 个高光片段".format(len(highlights)))
-
+        self.toast.show_message("检测到 {} 个高光片段".format(len(highlights)))
+        self.header_status.setText("检测完成 | {} 个高光片段".format(len(highlights)))
+        
     # ═══════════════════════════════════════
     #  Export flow
     # ═══════════════════════════════════════
@@ -501,29 +480,32 @@ class MainWindow(QMainWindow):
 
 
         # ═════════════════════════════════════
-        #  Auto-record (flag-guarded)
+        #  Auto-record (match-number based)
         # ═════════════════════════════════════
 
         if self.settings.get(
                 "auto_record_on_match_start", False):
 
-            # Reset when new warmup starts
-            if gsi.map_phase == "warmup":
-                self._auto_started = False
-                self._auto_stopped = False
-                self._processed_match = False
-
-            # Auto-start at round 1 (freezetime or live)
+            # Auto-start: new match AND not yet
+            # recorded for this match
             if (gsi_rx
-                    and gsi.round_num >= 1
-                    and gsi.round_phase in ("freezetime", "live")
+                    and gsi.match_number > 0
+                    and gsi.match_number
+                        > self._last_recorded_match
+                    and gsi.round_num >= 0
+                    and gsi.round_phase
+                        in ("freezetime", "live")
                     and not self._auto_started
                     and self.obs.state.connected
                     and not self.obs.state.recording):
                 if self.obs.start_recording():
                     self._auto_started = True
+                    self._last_recorded_match = (
+                        gsi.match_number)
                     self.toast.show_message(
-                        "第1回合开始，自动开始录制", 3000)
+                        "第{}局开始，自动开始录制".format(
+                            gsi.match_number),
+                        3000)
 
             # Auto-stop when match ends
             if (gsi.match_ended
@@ -531,8 +513,15 @@ class MainWindow(QMainWindow):
                     and not self._auto_stopped):
                 self.obs.stop_recording()
                 self._auto_stopped = True
+                self._auto_started = False
                 self.toast.show_message(
                     "比赛结束，自动停止录制", 3000)
+
+            # Reset on new warmup (ready for next)
+            if (gsi.map_phase == "warmup"
+                    and self._auto_stopped):
+                self._auto_started = False
+                self._auto_stopped = False
 
             # Reset when game exits
             if (not gsi_rx
@@ -540,24 +529,7 @@ class MainWindow(QMainWindow):
                     and self._auto_started):
                 self._auto_started = False
                 self._auto_stopped = False
-
-        # ── Auto-process demo ──
-        if (gsi.match_ended
-                and self.settings.get(
-                    "auto_process_new_demo", True)
-                and not self._processed_match):
-            self._processed_match = True
-            gsi.match_ended = False
-            self._auto_process_match()
-
-    def _auto_process_match(self):
-        demo = self.watcher.get_latest_demo()
-        if demo:
-            self.toast.show_message(
-                "自动处理 Demo...", 4000)
-            self._parse_demo(demo, "")
-        else:
-            self.toast.show_message("未找到 Demo", 4000)
+                self._last_recorded_match = 0
             
     # ═══════════════════════════════════════
     #  System Tray
@@ -629,6 +601,9 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Override close to minimize to tray."""
+        if not hasattr(self, '_tray'):
+            event.accept()
+            return
         event.ignore()
         self.hide()
         self._tray.showMessage(

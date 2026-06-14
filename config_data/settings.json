@@ -23,9 +23,5 @@
   "output_quality": "high",
   "output_format": "mp4",
   "use_copy_mode": false,
-  "ffmpeg_path": "",
-  "update_auto_check": true,
-  "update_notify": true,
-  "update_auto_download": false,
-  "language": "zh"
+  "ffmpeg_path": ""
 }

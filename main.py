@@ -9,7 +9,7 @@ if sys.platform == "win32":
     kernel32 = ctypes.windll.kernel32
     hwnd = kernel32.GetConsoleWindow()
     if hwnd:
-        kernel32.ShowWindow(hwnd, 0)
+        ctypes.windll.user32.ShowWindow(hwnd, 0)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:

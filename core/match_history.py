@@ -167,21 +167,13 @@ class MatchHistory:
                     except OSError:
                         pass
 
-            # Try to delete the match folder if empty
+            # Delete entire match folder
             output_dir = record.get("output_dir", "")
             if output_dir and os.path.isdir(output_dir):
-                clips_sub = os.path.join(output_dir, "clips")
-                # Remove clips subfolder
-                if os.path.isdir(clips_sub):
-                    try:
-                        shutil.rmtree(clips_sub)
-                    except OSError:
-                        pass
-                # Try to remove main match folder (only if empty)
                 try:
-                    os.rmdir(output_dir)
+                    shutil.rmtree(output_dir)
                 except OSError:
-                    pass  # Not empty, leave it
+                    pass
 
         # Remove from list
         self.matches = [m for m in self.matches if m["id"] != match_id]

@@ -1,14 +1,74 @@
 """
-仪表盘页面 - 总览和快速操作
+Dashboard page
 """
+import os
+import sys
+import subprocess
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QPushButton, QFrame, QGridLayout, QScrollArea
+    QFrame, QScrollArea,
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 from ui.widgets.status_card import StatusCard
 from ui.widgets.glow_button import GlowButton
+
+_FLAGS = 0
+if sys.platform == "win32":
+    _FLAGS = getattr(
+        subprocess, "CREATE_NO_WINDOW", 0)
+
+
+class _FFmpegChecker(QThread):
+    done = pyqtSignal(bool)
+
+    def run(self):
+        try:
+            r = subprocess.run(
+                ["ffmpeg", "-version"],
+                capture_output=True, timeout=5,
+                creationflags=_FLAGS)
+            self.done.emit(r.returncode == 0)
+        except Exception:
+            self.done.emit(False)
+
+
+class _ObsChecker(QThread):
+    done = pyqtSignal(bool, bool)
+
+    def __init__(self, obs):
+        super().__init__()
+        self._obs = obs
+
+    def run(self):
+        c, r = False, False
+        try:
+            if self._obs:
+                self._obs._update_state()
+                c = self._obs.state.connected
+                r = self._obs.state.recording
+        except Exception:
+            pass
+        self.done.emit(c, r)
+
+
+class _GsiChecker(QThread):
+    done = pyqtSignal(bool, bool)
+
+    def __init__(self, gsi):
+        super().__init__()
+        self._gsi = gsi
+
+    def run(self):
+        rx, c = False, False
+        try:
+            if self._gsi:
+                rx = self._gsi.is_gsi_receiving()
+                c = self._gsi.state.connected
+        except Exception:
+            pass
+        self.done.emit(rx, c)
 
 
 class DashboardPage(QWidget):
@@ -16,37 +76,25 @@ class DashboardPage(QWidget):
     def __init__(self, settings=None, parent=None):
         super().__init__(parent)
         self.settings = settings
+        self._obs = None
+        self._gsi = None
         self._setup_ui()
         self._connect_clicks()
 
-    @staticmethod
-    def _check_ffmpeg():
-        import subprocess
-        try:
-            result = subprocess.run(
-                ["ffmpeg", "-version"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            return result.returncode == 0
-        except FileNotFoundError:
-            return False
-        except Exception:
-            return False
+    def set_controllers(self, obs, gsi):
+        self._obs = obs
+        self._gsi = gsi
 
     def _connect_clicks(self):
-        """Make cards clickable to refresh."""
         self.obs_card.installEventFilter(self)
         self.gsi_card.installEventFilter(self)
         self.ffmpeg_card.installEventFilter(self)
 
-        self.obs_card.setCursor(
-            Qt.CursorShape.PointingHandCursor)
-        self.gsi_card.setCursor(
-            Qt.CursorShape.PointingHandCursor)
-        self.ffmpeg_card.setCursor(
-            Qt.CursorShape.PointingHandCursor)
+        for card in (self.obs_card,
+                     self.gsi_card,
+                     self.ffmpeg_card):
+            card.setCursor(
+                Qt.CursorShape.PointingHandCursor)
 
     def eventFilter(self, obj, event):
         if (event.type()
@@ -54,90 +102,85 @@ class DashboardPage(QWidget):
             if obj is self.obs_card:
                 self._refresh_obs()
                 return True
-            elif obj is self.gsi_card:
+            if obj is self.gsi_card:
                 self._refresh_gsi()
                 return True
-            elif obj is self.ffmpeg_card:
+            if obj is self.ffmpeg_card:
                 self._refresh_ffmpeg()
                 return True
         return super().eventFilter(obj, event)
 
     def _refresh_obs(self):
-        """Refresh OBS status card."""
         self.obs_card.set_value(
             "检测中...", "#ff9f43")
-        # Actual status updated by main_window timer
-        # Force update now
-        try:
-            from ui.main_window import MainWindow
-            parent = self.window()
-            if parent and hasattr(parent, 'obs'):
-                if parent.obs.state.connected:
-                    if parent.obs.state.recording:
-                        self.obs_card.set_value(
-                            "录制中", "#ff3b5c")
-                    else:
-                        self.obs_card.set_value(
-                            "已连接(空闲)", "#00e68a")
-                else:
-                    self.obs_card.set_value(
-                        "未连接", "#ff3b5c")
-        except Exception:
+        t = _ObsChecker(self._obs)
+        t.done.connect(self._on_obs_done)
+        t.start()
+        self._t_obs = t
+
+    def _on_obs_done(self, connected, recording):
+        if connected:
+            if recording:
+                self.obs_card.set_value(
+                    "录制中", "#ff3b5c")
+            else:
+                self.obs_card.set_value(
+                    "已连接(空闲)", "#00e68a")
+        else:
             self.obs_card.set_value(
                 "未连接", "#ff3b5c")
 
     def _refresh_gsi(self):
-        """Refresh GSI status card."""
         self.gsi_card.set_value(
             "检测中...", "#ff9f43")
-        try:
-            parent = self.window()
-            if parent and hasattr(parent, 'gsi'):
-                gsi = parent.gsi
-                if gsi.is_gsi_receiving():
-                    self.gsi_card.set_value(
-                        "接收中", "#00e68a")
-                elif gsi.state.connected:
-                    self.gsi_card.set_value(
-                        "等待数据", "#ff9f43")
-                else:
-                    self.gsi_card.set_value(
-                        "未启动", "#ff3b5c")
-        except Exception:
+        t = _GsiChecker(self._gsi)
+        t.done.connect(self._on_gsi_done)
+        t.start()
+        self._t_gsi = t
+
+    def _on_gsi_done(self, receiving, connected):
+        if receiving:
+            self.gsi_card.set_value(
+                "接收中", "#00e68a")
+        elif connected:
+            self.gsi_card.set_value(
+                "等待数据", "#ff9f43")
+        else:
             self.gsi_card.set_value(
                 "未启动", "#ff3b5c")
 
     def _refresh_ffmpeg(self):
-        """Refresh FFmpeg status card."""
         self.ffmpeg_card.set_value(
             "检测中...", "#ff9f43")
-        ok = self._check_ffmpeg()
+        t = _FFmpegChecker()
+        t.done.connect(self._on_ffmpeg_done)
+        t.start()
+        self._t_ff = t
+
+    def _on_ffmpeg_done(self, ok):
         if ok:
             self.ffmpeg_card.set_value(
                 "就绪", "#00e68a")
-        else:
-            # Check settings path
-            try:
-                parent = self.window()
-                if parent and hasattr(
-                        parent, 'settings'):
-                    path = parent.settings.get(
-                        "ffmpeg_path", "")
-                    if path:
-                        import os
-                        if os.path.isfile(path):
-                            self.ffmpeg_card.set_value(
-                                "就绪", "#00e68a")
-                            return
-            except Exception:
-                pass
-            self.ffmpeg_card.set_value(
-                "未安装", "#ff3b5c")
+            return
+        try:
+            p = self.window()
+            if p and hasattr(p, 'settings'):
+                path = p.settings.get(
+                    "ffmpeg_path", "")
+                if path and os.path.isfile(path):
+                    self.ffmpeg_card.set_value(
+                        "就绪", "#00e68a")
+                    return
+        except Exception:
+            pass
+        self.ffmpeg_card.set_value(
+            "未安装", "#ff3b5c")
 
     def _setup_ui(self):
         scroll = QScrollArea(self)
         scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setFrameShape(
+            QFrame.Shape.NoFrame)
         scroll.setStyleSheet(
             "background: transparent;")
 
@@ -162,7 +205,6 @@ class DashboardPage(QWidget):
         layout.addWidget(subtitle)
         layout.addSpacing(8)
 
-        # Status cards
         cards_layout = QHBoxLayout()
         cards_layout.setSpacing(16)
 
@@ -180,16 +222,11 @@ class DashboardPage(QWidget):
             accent_color="#00b4ff",
             icon="▶")
 
-        ffmpeg_ok = self._check_ffmpeg()
-        ffmpeg_value = "就绪" if ffmpeg_ok else "未安装"
-        ffmpeg_color = (
-            "#00e68a" if ffmpeg_ok else "#ff3b5c")
-
         self.ffmpeg_card = StatusCard(
             title="FFMPEG",
-            value=ffmpeg_value,
+            value="检测中...",
             subtitle="视频裁剪与拼接引擎",
-            accent_color=ffmpeg_color,
+            accent_color="#ff9f43",
             icon="◆")
 
         self.highlights_card = StatusCard(
@@ -202,43 +239,38 @@ class DashboardPage(QWidget):
         cards_layout.addWidget(self.obs_card)
         cards_layout.addWidget(self.gsi_card)
         cards_layout.addWidget(self.ffmpeg_card)
-        cards_layout.addWidget(self.highlights_card)
+        cards_layout.addWidget(
+            self.highlights_card)
         layout.addLayout(cards_layout)
 
-        # Hint
         hint = QLabel(
-            "\u2139 点击状态卡片可刷新检测")
+            "ℹ 点击状态卡片可刷新检测")
         hint.setStyleSheet(
             "font-size: 11px; color: #4a5c78; "
             "background: transparent;")
         layout.addWidget(hint)
 
         # Quick actions
-        actions_group = QFrame()
-        actions_group.setStyleSheet("""
-            QFrame {
-                background: #111a2e;
-                border: 1px solid #1a2744;
-                border-radius: 12px;
-            }
+        ag = QFrame()
+        ag.setStyleSheet("""
+            QFrame { background: #111a2e;
+            border: 1px solid #1a2744;
+            border-radius: 12px; }
         """)
-        actions_layout = QVBoxLayout(actions_group)
-        actions_layout.setContentsMargins(
-            24, 20, 24, 20)
-        actions_layout.setSpacing(16)
+        al = QVBoxLayout(ag)
+        al.setContentsMargins(24, 20, 24, 20)
+        al.setSpacing(16)
 
-        actions_title = QLabel("快速操作")
-        actions_title.setStyleSheet("""
-            font-family: "Exo 2";
-            font-size: 15px; font-weight: 600;
-            color: #e8edf5;
+        at = QLabel("快速操作")
+        at.setStyleSheet("""
+            font-family: "Exo 2"; font-size: 15px;
+            font-weight: 600; color: #e8edf5;
             background: transparent;
         """)
-        actions_layout.addWidget(actions_title)
+        al.addWidget(at)
 
-        btn_row = QHBoxLayout()
-        btn_row.setSpacing(12)
-
+        br = QHBoxLayout()
+        br.setSpacing(12)
         self.btn_parse = GlowButton(
             "\U0001f4c2  选择 Demo 解析")
         self.btn_scan = GlowButton(
@@ -247,87 +279,85 @@ class DashboardPage(QWidget):
         self.btn_output = GlowButton(
             "\U0001f4c1  打开输出目录",
             color="#00e68a")
-
-        btn_row.addWidget(self.btn_parse)
-        btn_row.addWidget(self.btn_scan)
-        btn_row.addWidget(self.btn_output)
-        btn_row.addStretch()
-        actions_layout.addLayout(btn_row)
-        layout.addWidget(actions_group)
+        br.addWidget(self.btn_parse)
+        br.addWidget(self.btn_scan)
+        br.addWidget(self.btn_output)
+        br.addStretch()
+        al.addLayout(br)
+        layout.addWidget(ag)
 
         # Info area
         info_layout = QHBoxLayout()
         info_layout.setSpacing(16)
 
-        recent_frame = QFrame()
-        recent_frame.setStyleSheet("""
-            QFrame {
-                background: #111a2e;
-                border: 1px solid #1a2744;
-                border-radius: 12px;
-            }
+        rf = QFrame()
+        rf.setStyleSheet("""
+            QFrame { background: #111a2e;
+            border: 1px solid #1a2744;
+            border-radius: 12px; }
         """)
-        recent_layout = QVBoxLayout(recent_frame)
-        recent_layout.setContentsMargins(
-            20, 16, 20, 16)
-        recent_layout.setSpacing(10)
-        recent_title = QLabel("最近活动")
-        recent_title.setStyleSheet("""
-            font-family: "Exo 2";
-            font-size: 14px; font-weight: 600;
-            color: #8b99b0;
+        rl = QVBoxLayout(rf)
+        rl.setContentsMargins(20, 16, 20, 16)
+        rl.setSpacing(10)
+        rt = QLabel("最近活动")
+        rt.setStyleSheet("""
+            font-family: "Exo 2"; font-size: 14px;
+            font-weight: 600; color: #8b99b0;
             background: transparent;
         """)
-        recent_layout.addWidget(recent_title)
+        rl.addWidget(rt)
         self.recent_list = QLabel(
-            "暂无活动记录\n\n解析 Demo 或等待 "
-            "GSI 检测对局结束后自动处理")
+            "暂无活动记录\n\n"
+            "解析 Demo 或等待 GSI 检测"
+            "对局结束后自动处理")
         self.recent_list.setWordWrap(True)
         self.recent_list.setStyleSheet(
             "font-size: 13px; color: #4a5c78; "
-            "background: transparent; padding: 20px;")
-        recent_layout.addWidget(self.recent_list)
-        recent_layout.addStretch()
-        info_layout.addWidget(recent_frame)
+            "background: transparent; "
+            "padding: 20px;")
+        rl.addWidget(self.recent_list)
+        rl.addStretch()
+        info_layout.addWidget(rf)
 
-        guide_frame = QFrame()
-        guide_frame.setStyleSheet("""
-            QFrame {
-                background: #111a2e;
-                border: 1px solid #1a2744;
-                border-radius: 12px;
-            }
+        gf = QFrame()
+        gf.setStyleSheet("""
+            QFrame { background: #111a2e;
+            border: 1px solid #1a2744;
+            border-radius: 12px; }
         """)
-        guide_layout = QVBoxLayout(guide_frame)
-        guide_layout.setContentsMargins(
-            20, 16, 20, 16)
-        guide_layout.setSpacing(10)
-        guide_title = QLabel("使用指南")
-        guide_title.setStyleSheet("""
-            font-family: "Exo 2";
-            font-size: 14px; font-weight: 600;
-            color: #8b99b0;
+        gl = QVBoxLayout(gf)
+        gl.setContentsMargins(20, 16, 20, 16)
+        gl.setSpacing(10)
+        gt = QLabel("使用指南")
+        gt.setStyleSheet("""
+            font-family: "Exo 2"; font-size: 14px;
+            font-weight: 600; color: #8b99b0;
             background: transparent;
         """)
-        guide_layout.addWidget(guide_title)
-        guide_text = QLabel(
+        gl.addWidget(gt)
+        gtxt = QLabel(
             "1. 在「设置」中配置 OBS 和 CS2 路径\n"
-            "2. 在「Demo 库」中选择或拖入 .dem 文件\n"
+            "2. 在「Demo 库」中选择或拖入 "
+            ".dem 文件\n"
             "3. 系统自动解析并检测高光时刻\n"
-            "4. 在「集锦编辑」中选择要导出的片段\n"
-            "5. 点击导出，自动生成高光集锦视频\n\n"
-            "开启自动模式后，打完比赛即可自动生成！")
-        guide_text.setWordWrap(True)
-        guide_text.setStyleSheet(
+            "4. 在「集锦编辑」中选择要导出"
+            "的片段\n"
+            "5. 点击导出，自动生成高光集锦"
+            "视频\n\n"
+            "开启自动模式后，打完比赛即可"
+            "自动生成！")
+        gtxt.setWordWrap(True)
+        gtxt.setStyleSheet(
             "font-size: 13px; color: #8b99b0; "
-            "background: transparent; padding: 4px 0;")
-        guide_layout.addWidget(guide_text)
-        guide_layout.addStretch()
-        info_layout.addWidget(guide_frame)
+            "background: transparent; "
+            "padding: 4px 0;")
+        gl.addWidget(gtxt)
+        gl.addStretch()
+        info_layout.addWidget(gf)
         layout.addLayout(info_layout)
         layout.addStretch()
 
         scroll.setWidget(container)
-        main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.addWidget(scroll)
+        ml = QVBoxLayout(self)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.addWidget(scroll)

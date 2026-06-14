@@ -475,14 +475,14 @@ class SettingsPage(QWidget):
             self.field_min_score)
 
         self.field_min_kills = QSpinBox()
-        self.field_min_kills.setRange(2, 5)
+        self.field_min_kills.setRange(1, 5)
         self.field_min_kills.setValue(2)
         form.addRow(
             "\u8fde\u6740\u6700\u5c11\u6740:",
             self.field_min_kills)
 
         self.field_clutch_kills = QSpinBox()
-        self.field_clutch_kills.setRange(2, 5)
+        self.field_clutch_kills.setRange(1, 5)
         self.field_clutch_kills.setValue(2)
         form.addRow(
             "Clutch \u6700\u5c11\u6740:",
@@ -1235,44 +1235,53 @@ class SettingsPage(QWidget):
     def _clean_cache(self):
         from PyQt6.QtWidgets import QMessageBox
         ret = QMessageBox.warning(
-            self, "\u6e05\u9664\u7f13\u5b58",
-            "\u786e\u5b9a\u8981\u6e05\u9664\u6240\u6709"
-            "\u7f13\u5b58\u6570\u636e\u5417\uff1f\n\n"
-            "\u5305\u62ec\uff1a\n"
-            "\u2022 Demo \u89e3\u6790\u7f13\u5b58\n"
-            "\u2022 \u5bf9\u5c40\u8bb0\u5f55\u6587\u4ef6\n"
-            "\u2022 \u65f6\u95f4\u6233\u7f13\u5b58\n\n"
-            "\u4e0d\u4f1a\u5220\u9664\u8bbe\u7f6e\u6587\u4ef6",
+            self, "清除缓存",
+            "确定要清除所有缓存数据吗？\n\n"
+            "包括：\n"
+            "• Demo 解析缓存\n"
+            "• 对局记录文件\n"
+            "• 时间戳缓存\n\n"
+            "不会删除设置文件",
             QMessageBox.StandardButton.Yes
             | QMessageBox.StandardButton.No)
         if ret != QMessageBox.StandardButton.Yes:
             return
 
+        import shutil
         count = 0
-        # Match history
-        try:
-            hf = os.path.join(
-                ROOT, "data", "match_history.json")
-            if os.path.isfile(hf):
-                os.remove(hf)
-                count += 1
-        except Exception:
-            pass
+        project_root = os.path.abspath(
+            os.path.join(os.path.dirname(__file__),
+                         "..", ".."))
 
-        # data folder
-        data_dir = os.path.join(ROOT, "data")
+        # config_data folder (match_history etc)
+        data_dir = os.path.join(
+            project_root, "config_data")
         if os.path.isdir(data_dir):
             for f in os.listdir(data_dir):
                 fp = os.path.join(data_dir, f)
-                if os.path.isfile(fp):
-                    try:
+                try:
+                    if os.path.isfile(fp):
                         os.remove(fp)
                         count += 1
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
+
+        # Also check legacy "data" folder
+        data_dir2 = os.path.join(
+            project_root, "data")
+        if os.path.isdir(data_dir2):
+            for f in os.listdir(data_dir2):
+                fp = os.path.join(data_dir2, f)
+                try:
+                    if os.path.isfile(fp):
+                        os.remove(fp)
+                        count += 1
+                except Exception:
+                    pass
 
         # Demo parse cache
-        cache_dir = os.path.join(ROOT, "cache")
+        cache_dir = os.path.join(
+            project_root, "cache")
         if os.path.isdir(cache_dir):
             for f in os.listdir(cache_dir):
                 fp = os.path.join(cache_dir, f)
@@ -1281,15 +1290,13 @@ class SettingsPage(QWidget):
                         os.remove(fp)
                         count += 1
                     elif os.path.isdir(fp):
-                        import shutil
                         shutil.rmtree(fp)
                         count += 1
                 except Exception:
                     pass
 
         self._clean_status.setText(
-            "\u2705 \u7f13\u5b58\u5df2\u6e05\u9664"
-            "\uff0c\u5220\u9664 {} \u4e2a\u6587\u4ef6".format(
+            "缓存已清除，删除 {} 个文件".format(
                 count))
 
     def _clean_all_data(self):

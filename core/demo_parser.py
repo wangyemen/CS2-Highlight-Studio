@@ -35,6 +35,7 @@ class DemoInfo:
     team_b_name: str = "Team B"
     warmup_duration: float = 0.0
     competitive_rounds: int = 0
+    video_offset_tick: int = 0
 
     @property
     def filename(self):
@@ -144,6 +145,10 @@ class DemoParserEngine:
         if not hurt_df.empty:
             logger.info("HURT columns: %s", list(hurt_df.columns))
 
+        # Video alignment
+        info.video_offset_tick = self._find_video_offset(
+            parser, steam_id)
+
         # Warmup
         tick_col = self._find_col(kills_df.columns, self.TICK_COLS) if not kills_df.empty else None
         kills_df, warmup_kills = self._split_warmup(kills_df, tick_rate, tick_col)
@@ -161,6 +166,10 @@ class DemoParserEngine:
 
         # Clean kills
         kills_df = self._clean_kills(kills_df, tick_rate)
+
+        # Assign rounds to kills
+        kills_df = self._assign_rounds_to_kills(
+            kills_df, rounds_df, round_end_df)
 
         # Scores
         if round_end_df is not None and not round_end_df.empty:
@@ -207,6 +216,19 @@ class DemoParserEngine:
                     return result
                 if hasattr(result, "to_pandas"):
                     return result.to_pandas()
+                # Handle list of tuples format
+                # demoparser2 returns [(event_name, df)]
+                if isinstance(result, list):
+                    for item in result:
+                        if (isinstance(item, tuple)
+                                and len(item) >= 2):
+                            df = item[1]
+                            if isinstance(
+                                    df, pd.DataFrame):
+                                return df
+                        elif isinstance(
+                                item, pd.DataFrame):
+                            return item
             except Exception:
                 continue
         return pd.DataFrame()
@@ -216,17 +238,8 @@ class DemoParserEngine:
     # ═══════════════════════════════════════
 
     def _split_warmup(self, df, tick_rate, tick_col=None):
-        if df is None or df.empty:
-            return df, None
-        if "round" in df.columns:
-            mask = df["round"] <= 0
-            if mask.any():
-                return df[~mask].copy(), df[mask].copy()
-        if tick_col and tick_col in df.columns:
-            threshold = tick_rate * 120
-            mask = df[tick_col] < threshold
-            if mask.any() and mask.sum() < len(df) * 0.5:
-                return df[~mask].copy(), df[mask].copy()
+        """Keep all data including warmup.
+        Video recording starts from demo beginning."""
         return df, None
 
     # ═══════════════════════════════════════
@@ -284,6 +297,15 @@ class DemoParserEngine:
 
         total_rounds = max(info.score_ct + info.score_t, 1)
         info.competitive_rounds = total_rounds
+
+        # Filter to formal rounds only (exclude warmup)
+        if ("round" in kills_df.columns
+                and not kills_df.empty):
+            kills_df = kills_df[
+                kills_df["round"] > 0].copy()
+            logger.info(
+                "Formal kills for stats: %d",
+                len(kills_df))
 
         # Find columns dynamically
         att_col = self._find_col(kills_df.columns, self.ATTACKER_COLS) if not kills_df.empty else None
@@ -499,6 +521,152 @@ class DemoParserEngine:
         import sys
         return "demoparser2 v{}, pandas v{}, Python {}".format(
             _PARSER_VERSION, pd.__version__, sys.version.split()[0])
+
+    def _find_video_offset(self, parser, steam_id):
+        """Find first tick where user is alive.
+        If no steam_id, find earliest alive tick
+        from any player."""
+        try:
+            ticks_df = parser.parse_ticks([
+                "steamid", "is_alive"])
+            if ticks_df is None or ticks_df.empty:
+                return 0
+
+            alive = ticks_df[
+                ticks_df["is_alive"] == True]
+
+            if alive.empty:
+                return 0
+
+            if steam_id:
+                player = alive[
+                    alive["steamid"].astype(str)
+                    == str(steam_id)]
+                if not player.empty:
+                    offset = int(
+                        player["tick"].min())
+                    logger.info(
+                        "Video offset: tick %d "
+                        "(steamid=%s)",
+                        offset, steam_id)
+                    return offset
+
+            # Fallback: earliest alive tick
+            offset = int(alive["tick"].min())
+            logger.info(
+                "Video offset (fallback): tick %d",
+                offset)
+            return offset
+        except Exception as e:
+            logger.warning(
+                "Video offset failed: %s", e)
+            return 0
+
+    def _assign_rounds_to_kills(
+            self, kills_df, rounds_df, round_end_df):
+        """Assign round number to each kill."""
+        if kills_df is None or kills_df.empty:
+            return kills_df
+
+        tc = self._find_col(
+            kills_df.columns, self.TICK_COLS)
+        if not tc:
+            return kills_df
+
+        # Build round boundaries
+        rounds = {}
+
+        if (round_end_df is not None
+                and not round_end_df.empty):
+            rc = self._find_col(
+                round_end_df.columns, ("round",))
+            te = self._find_col(
+                round_end_df.columns, ("tick",))
+            if rc and te:
+                for _, row in round_end_df.iterrows():
+                    try:
+                        r = int(row[rc])
+                        t = int(row[te])
+                    except (ValueError, TypeError):
+                        continue
+                    if r == 0:
+                        rounds[0] = {
+                            "start": 0, "end": t}
+
+        if (rounds_df is not None
+                and not rounds_df.empty):
+            rc = self._find_col(
+                rounds_df.columns, ("round",))
+            te = self._find_col(
+                rounds_df.columns, ("tick",))
+            if rc and te:
+                for _, row in rounds_df.iterrows():
+                    try:
+                        r = int(row[rc])
+                        t = int(row[te])
+                    except (ValueError, TypeError):
+                        continue
+                    if r <= 0:
+                        continue
+                    old = rounds.get(
+                        r, {}).get("start", 0)
+                    if t > old:
+                        rounds.setdefault(
+                            r, {})["start"] = t
+
+        if (round_end_df is not None
+                and not round_end_df.empty):
+            rc = self._find_col(
+                round_end_df.columns, ("round",))
+            te = self._find_col(
+                round_end_df.columns, ("tick",))
+            if rc and te:
+                for _, row in round_end_df.iterrows():
+                    try:
+                        r = int(row[rc])
+                        t = int(row[te])
+                    except (ValueError, TypeError):
+                        continue
+                    if r <= 0:
+                        continue
+                    rounds.setdefault(
+                        r, {})["end"] = t
+
+        if not rounds:
+            return kills_df
+
+        sorted_r = sorted(rounds.items())
+
+        def find(tick):
+            for rnd, b in sorted_r:
+                s = b.get("start", 0)
+                e = b.get("end", 999999999)
+                if s <= tick <= e:
+                    return rnd
+            first = 0
+            for rnd, b in sorted_r:
+                if rnd >= 1:
+                    first = b.get(
+                        "start", 999999999)
+                    break
+            if tick < first:
+                return 0
+            best, bd = 0, float("inf")
+            for rnd, b in sorted_r:
+                if rnd < 1:
+                    continue
+                d = abs(
+                    tick - b.get("start", 0))
+                if d < bd:
+                    bd = d
+                    best = rnd
+            return best
+
+        df = kills_df.copy()
+        df["round"] = df[tc].apply(
+            lambda t: find(int(t))
+            if pd.notna(t) else 0)
+        return df
 
     @staticmethod
     def scan_demo_folder(folder):
