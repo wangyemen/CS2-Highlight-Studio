@@ -217,12 +217,15 @@ class MainWindow(QMainWindow):
         self._current_match_folder = ""
         steam_id = (self.settings.get("steam_id", "")
                     if self.settings else "")
+        tick_rate = (self.settings.get("tick_rate", 0)
+                     if self.settings else 0)
 
         self.toast.show_message("解析: " + _fname(demo_path))
         self.header_status.setText("解析中...")
 
         self._parse_worker = DemoParseWorker(
-            demo_path, steam_id=steam_id)
+            demo_path, steam_id=steam_id,
+            tick_rate=tick_rate)
         self._parse_worker.progress.connect(
             lambda m: self.header_status.setText(m))
         self._parse_worker.finished.connect(self._on_parse_done)

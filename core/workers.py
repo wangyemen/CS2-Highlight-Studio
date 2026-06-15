@@ -9,10 +9,12 @@ class DemoParseWorker(QThread):
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-    def __init__(self, filepath, steam_id=""):
+    def __init__(self, filepath, steam_id="",
+                 tick_rate=0):
         super().__init__()
         self._filepath = filepath
         self._steam_id = steam_id
+        self._tick_rate = tick_rate
 
     def run(self):
         try:
@@ -20,7 +22,9 @@ class DemoParseWorker(QThread):
             from core.demo_parser import DemoParserEngine
             engine = DemoParserEngine()
             result = engine.parse_demo(
-                self._filepath, steam_id=self._steam_id)
+                self._filepath,
+                tick_rate=self._tick_rate,
+                steam_id=self._steam_id)
             self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
