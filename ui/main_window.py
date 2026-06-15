@@ -304,8 +304,8 @@ class MainWindow(QMainWindow):
             if mn:
                 match_name = mn
 
-        quality = (self.settings.get("output_quality", "high")
-                   if self.settings else "high")
+        quality = (self.settings.get("output_quality", "balanced")
+                   if self.settings else "balanced")
 
         self.toast.show_message("开始导出...", 3000)
         self.header_status.setText("裁剪中...")
@@ -496,6 +496,7 @@ class MainWindow(QMainWindow):
                     and gsi.match_number
                         > self._last_recorded_match
                     and gsi.round_num >= 0
+                    and gsi.map_phase != "warmup"
                     and gsi.round_phase
                         in ("freezetime", "live")
                     and not self._auto_started

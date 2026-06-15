@@ -578,10 +578,12 @@ class SettingsPage(QWidget):
 
         self.field_output_quality = QComboBox()
         self.field_output_quality.addItems([
-            "\u6700\u9ad8 (CRF 18)",
-            "\u9ad8 (CRF 20)",
-            "\u4e2d (CRF 23)",
-            "\u4f4e (CRF 28)"])
+            "\u753b\u8d28\u4f18\u5148 "
+            "(\u63a8\u8350)",
+            "\u5747\u8861\u6a21\u5f0f",
+            "\u901f\u5ea6\u4f18\u5148",
+            "\u590d\u5236\u6a21\u5f0f "
+            "(\u65e0\u635f\u5feb\u901f)"])
         form.addRow(
             "\u753b\u8d28:",
             self.field_output_quality)
@@ -592,16 +594,6 @@ class SettingsPage(QWidget):
         form.addRow(
             "\u5c01\u88c5\u683c\u5f0f:",
             self.field_output_format)
-
-        self.field_copy_mode = QCheckBox(
-            "\u590d\u5236\u6a21\u5f0f "
-            "(\u65e0\u635f\u5feb\u901f\u5bfc\u51fa)")
-        self.field_copy_mode.setToolTip(
-            "\u76f4\u63a5\u590d\u5236\u539f\u59cb\u8d28\u91cf"
-            "\uff0c\u4e0d\u91cd\u65b0\u7f16\u7801\u3002"
-            "\u901f\u5ea6\u6700\u5feb"
-            "\uff0c\u4f46\u65e0\u6cd5\u81ea\u5b9a\u4e49\u7247\u6bb5\u3002")
-        form.addRow("", self.field_copy_mode)
         card.addLayout(form)
         layout.addWidget(card)
 
@@ -1102,10 +1094,12 @@ class SettingsPage(QWidget):
 
         self.field_output_dir.setText(
             s.get("output_dir", ""))
-        q = s.get("output_quality", "high")
+        q = s.get("output_quality", "balanced")
         q_map = {
-            "low": 3, "medium": 2,
-            "high": 1, "very_high": 0}
+            "quality": 0, "balanced": 1,
+            "speed": 2, "copy": 3,
+            "very_high": 0, "high": 1,
+            "medium": 1, "low": 2}
         self.field_output_quality.setCurrentIndex(
             q_map.get(q, 1))
         fmt = s.get("output_format", "mp4")
@@ -1113,11 +1107,8 @@ class SettingsPage(QWidget):
         if fi >= 0:
             self.field_output_format.setCurrentIndex(
                 fi)
-        self.field_copy_mode.setChecked(
-            s.get("use_copy_mode", False))
         self.field_ffmpeg.setText(
             s.get("ffmpeg_path", ""))
-
         self.field_hk_record.setText(
             s.get("hotkey_record", "F9"))
         self.field_hk_replay.setText(
@@ -1187,19 +1178,17 @@ class SettingsPage(QWidget):
               self.field_output_dir.text().strip())
         q_text = \
             self.field_output_quality.currentText()
-        if "CRF 18" in q_text:
-            q_val = "very_high"
-        elif "CRF 20" in q_text:
-            q_val = "high"
-        elif "CRF 23" in q_text:
-            q_val = "medium"
+        if "\u753b\u8d28" in q_text:
+            q_val = "quality"
+        elif "\u901f\u5ea6" in q_text:
+            q_val = "speed"
+        elif "\u590d\u5236" in q_text:
+            q_val = "copy"
         else:
-            q_val = "low"
+            q_val = "balanced"
         s.set("output_quality", q_val)
         s.set("output_format",
               self.field_output_format.currentText())
-        s.set("use_copy_mode",
-              self.field_copy_mode.isChecked())
         s.set("ffmpeg_path",
               self.field_ffmpeg.text().strip())
 
