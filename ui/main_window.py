@@ -136,6 +136,10 @@ class MainWindow(QMainWindow):
         self.demo_page.parse_requested.connect(self._parse_demo)
         self.editor_page.export_requested.connect(
             self._export_highlights)
+        self.dashboard_page.parse_requested.connect(
+            lambda: self.sidebar._on_nav(1))
+        self.dashboard_page.scan_requested.connect(
+            self._on_dashboard_scan)
         self.obs.set_status_callback(self._on_obs_status)
         self.gsi.add_callback(self._on_gsi_update)
 
@@ -181,6 +185,11 @@ class MainWindow(QMainWindow):
         self.page_title.setText(
             names[i] if i < len(names) else "")
 
+    def _on_dashboard_scan(self):
+        self.sidebar._on_nav(1)
+        if hasattr(self.demo_page, '_scan_folder'):
+            self.demo_page._scan_folder()
+
     # ═══════════════════════════════════════
     #  Hotkeys
     # ═══════════════════════════════════════
@@ -225,7 +234,8 @@ class MainWindow(QMainWindow):
 
         self._parse_worker = DemoParseWorker(
             demo_path, steam_id=steam_id,
-            tick_rate=tick_rate)
+            tick_rate=tick_rate,
+            video_path=video_path)
         self._parse_worker.progress.connect(
             lambda m: self.header_status.setText(m))
         self._parse_worker.finished.connect(self._on_parse_done)
@@ -274,8 +284,18 @@ class MainWindow(QMainWindow):
             self._current_match_id = record["id"]
             self._current_match_folder = record.get("output_dir", "")
 
+        user_player = ""
+        if (self._current_match
+                and self._current_match
+                    .info.user_name):
+            user_player = (
+                self._current_match.info.user_name)
+
         self.editor_page.set_highlights(
-            highlights, self._current_source_video, all_players)
+            highlights,
+            self._current_source_video,
+            all_players,
+            user_player=user_player)
         self.editor_page.set_match_folder(self._current_match_folder)
 
         self.dashboard_page.highlights_card.set_value(str(len(highlights)))

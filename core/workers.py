@@ -3,18 +3,18 @@ QThread background workers
 """
 from PyQt6.QtCore import QThread, pyqtSignal
 
-
 class DemoParseWorker(QThread):
     progress = pyqtSignal(str)
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
     def __init__(self, filepath, steam_id="",
-                 tick_rate=0):
+                 tick_rate=0, video_path=""):
         super().__init__()
         self._filepath = filepath
         self._steam_id = steam_id
         self._tick_rate = tick_rate
+        self._video_path = video_path
 
     def run(self):
         try:
@@ -24,11 +24,11 @@ class DemoParseWorker(QThread):
             result = engine.parse_demo(
                 self._filepath,
                 tick_rate=self._tick_rate,
-                steam_id=self._steam_id)
+                steam_id=self._steam_id,
+                video_path=self._video_path)
             self.finished.emit(result)
         except Exception as e:
             self.error.emit(str(e))
-
 
 class HighlightDetectWorker(QThread):
     progress = pyqtSignal(str)

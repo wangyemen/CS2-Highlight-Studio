@@ -70,8 +70,10 @@ class _GsiChecker(QThread):
             pass
         self.done.emit(rx, c)
 
-
 class DashboardPage(QWidget):
+
+    parse_requested = pyqtSignal()
+    scan_requested = pyqtSignal()
 
     def __init__(self, settings=None, parent=None):
         super().__init__(parent)
@@ -90,11 +92,43 @@ class DashboardPage(QWidget):
         self.gsi_card.installEventFilter(self)
         self.ffmpeg_card.installEventFilter(self)
 
+        self.btn_parse.clicked.connect(
+            self.parse_requested.emit)
+        self.btn_scan.clicked.connect(
+            self.scan_requested.emit)
+        self.btn_output.clicked.connect(
+            self._open_output)
+
         for card in (self.obs_card,
                      self.gsi_card,
                      self.ffmpeg_card):
             card.setCursor(
                 Qt.CursorShape.PointingHandCursor)
+
+    def _open_output(self):
+        output_dir = ""
+        if self.settings:
+            output_dir = self.settings.get(
+                "output_dir", "")
+        if output_dir and os.path.isdir(
+                output_dir):
+            if os.name == "nt":
+                os.startfile(output_dir)
+            elif sys.platform == "darwin":
+                subprocess.Popen(
+                    ["open", output_dir])
+            else:
+                subprocess.Popen(
+                    ["xdg-open", output_dir])
+        else:
+            from PyQt6.QtWidgets import (
+                QMessageBox)
+            QMessageBox.information(
+                self,
+                "输出目录",
+                "尚未设置输出目录。\n\n"
+                "请在「设置」页面配置"
+                "输出目录路径。")
 
     def eventFilter(self, obj, event):
         if (event.type()

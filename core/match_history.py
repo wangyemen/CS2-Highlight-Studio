@@ -11,7 +11,8 @@ from datetime import datetime
 class MatchHistory:
 
     def __init__(self):
-        self._data_dir = Path(__file__).parent.parent / "config_data"
+        from core import get_app_root
+        self._data_dir = get_app_root() / "config_data"
         self._data_dir.mkdir(exist_ok=True)
         self._history_file = self._data_dir / "match_history.json"
         self.matches = []

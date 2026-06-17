@@ -3,10 +3,15 @@ CS2 Demo Parser - demoparser2 v0.41.x compatible
 """
 import os
 import logging
+import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
 
 import pandas as pd
+
+_CREATION_FLAGS = 0
+if hasattr(subprocess, "CREATE_NO_WINDOW"):
+    _CREATION_FLAGS = subprocess.CREATE_NO_WINDOW
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,7 @@ class DemoInfo:
     warmup_duration: float = 0.0
     competitive_rounds: int = 0
     video_offset_tick: int = 0
+    user_name: str = ""
 
     @property
     def filename(self):
@@ -121,7 +127,8 @@ class DemoParserEngine:
     # ═══════════════════════════════════════
 
     def parse_demo(self, filepath,
-                   tick_rate=0, steam_id=""):
+                   tick_rate=0, steam_id="",
+                   video_path=""):
         filepath = str(
             Path(filepath).resolve())
         if not os.path.exists(filepath):
@@ -132,17 +139,28 @@ class DemoParserEngine:
         print("[Parser] File: {}".format(
             os.path.basename(filepath)))
 
-        # 1. Tick data first (no tick rate needed)
+        # 1. Tick data first
         tick_info = self._parse_tick_info(parser)
 
-        # 2. Tick rate
-        # tick_rate=0 means Auto
+        # 2. Get video duration
+        video_dur = 0.0
+        if video_path and os.path.isfile(
+                video_path):
+            video_dur = self._get_video_duration(
+                video_path)
+            print("[Parser] Video: {:.1f}s".format(
+                video_dur))
+        else:
+            print("[Parser] No video path")
+
+        # 3. Tick rate
         actual_tr = self._detect_tick_rate(
-            parser, tick_rate, tick_info)
+            parser, tick_rate, tick_info,
+            video_dur)
         print("[Parser] Tick rate: {}".format(
             actual_tr))
 
-        # 3. Header
+        # 4. Header
         header = {}
         try:
             header = parser.parse_header() or {}
@@ -153,21 +171,27 @@ class DemoParserEngine:
         print("[Parser] Map: {}".format(
             info.map_name))
 
-        # 4. Offset + round bounds
+        # 5. Offset + round bounds
         warmup_end = tick_info["warmup_end_tick"]
         round_bounds = tick_info["rounds"]
 
-        info.video_offset_tick = warmup_end
+        # Determine offset using video comparison
+        offset = self._determine_offset(
+            warmup_end, round_bounds,
+            actual_tr, video_dur)
+        info.video_offset_tick = offset
         info.warmup_duration = (
             warmup_end / actual_tr
             if actual_tr > 0 else 0)
         print("[Parser] Offset: tick {} "
-              "(warmup {:.1f}s)".format(
-                  warmup_end, info.warmup_duration))
+              "(warmup {:.1f}s, "
+              "video_dur={:.1f}s)".format(
+                  offset, info.warmup_duration,
+                  video_dur))
         print("[Parser] Rounds: {}".format(
             len(round_bounds)))
 
-        # 5. Events (v0.41 list API)
+        # 6. Events
         kills_df = self._safe_parse(
             parser, "player_death",
             fields=["team_num", "X", "Y", "Z",
@@ -196,24 +220,34 @@ class DemoParserEngine:
             if round_end_df is not None
             and not round_end_df.empty else 0))
 
-        # 6. Clean kills
+        # 7. Clean kills
         kills_df = self._clean_kills(
             kills_df, actual_tr)
 
-        # 7. Assign rounds to kills
+        # 8. Assign rounds to kills
         kills_df = self._assign_rounds(
             kills_df, round_bounds,
             rounds_df, round_end_df)
 
-        # 8. Scores
+        # 9. Resolve user teams from ticks
+        self._user_teams = {}
+        self._all_player_teams = {}
+        self._user_name = {}
+        self._name_fix = {}
+        if steam_id:
+            self._resolve_user_teams(
+                parser, steam_id)
+            info.user_name = self._user_name
+
+        # 10. Scores
         if (round_end_df is not None
                 and not round_end_df.empty):
             self._extract_scores(
-                info, round_end_df)
+                info, round_end_df, steam_id)
         print("[Parser] Score: {}-{}".format(
             info.score_ct, info.score_t))
 
-        # 9. Build match
+        # 10. Build match
         match = ParsedMatch(
             info=info,
             kills_df=kills_df,
@@ -233,16 +267,71 @@ class DemoParserEngine:
         return match
 
     # ═══════════════════════════════════════
+    #  Video duration (FFmpeg)
+    # ═══════════════════════════════════════
+
+    @staticmethod
+    def _get_video_duration(video_path):
+        """Get video duration in seconds
+        using FFmpeg."""
+        for cmd in (
+            ["ffmpeg", "-i", video_path,
+             "-f", "null", "-"],
+        ):
+            try:
+                r = subprocess.run(
+                    cmd, capture_output=True,
+                    timeout=10,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=_CREATION_FLAGS)
+                for line in r.stderr.split("\n"):
+                    if "Duration" in line:
+                        part = (line.split(
+                            "Duration:")[1]
+                            .split(",")[0]
+                            .strip())
+                        h, m, s = part.split(":")
+                        return (float(h) * 3600
+                                + float(m) * 60
+                                + float(s))
+            except Exception:
+                pass
+
+        # Fallback: try ffprobe
+        for cmd in (
+            ["ffprobe", "-v", "error",
+             "-show_entries",
+             "format=duration",
+             "-of", "default=noprint_wrappers=1"
+                    ":nokey=1",
+             video_path],
+        ):
+            try:
+                r = subprocess.run(
+                    cmd, capture_output=True,
+                    timeout=10,
+                    encoding="utf-8",
+                    errors="replace",
+                    creationflags=_CREATION_FLAGS)
+                if r.stdout.strip():
+                    return float(
+                        r.stdout.strip())
+            except Exception:
+                pass
+
+        return 0.0
+
+    # ═══════════════════════════════════════
     #  Tick rate detection
     # ═══════════════════════════════════════
 
     def _detect_tick_rate(self, parser,
-                          configured, tick_info):
-        """tick_rate > 0 → user chose 64/128.
-        tick_rate == 0 → Auto: use round data
-        to pick the most realistic tick rate."""
+                          configured, tick_info,
+                          video_dur=0):
+        """User-set → parser attr → header →
+        video duration comparison → default 64."""
 
-        # Non-Auto: use directly
         if configured and configured > 0:
             return configured
 
@@ -254,10 +343,6 @@ class DemoParserEngine:
                 try:
                     v = int(val)
                     if v > 0:
-                        print(
-                            "[Parser] tick rate "
-                            "from parser: "
-                            "{}".format(v))
                         return v
                 except (ValueError, TypeError):
                     pass
@@ -270,10 +355,6 @@ class DemoParserEngine:
                 if key in header:
                     v = int(header[key])
                     if v > 0:
-                        print(
-                            "[Parser] tick rate "
-                            "from header: "
-                            "{}".format(v))
                         return v
             if "interval_per_tick" in header:
                 ival = float(
@@ -283,18 +364,82 @@ class DemoParserEngine:
         except Exception:
             pass
 
-        # Round-boundary heuristic
+        # Video duration comparison
+        if (video_dur > 0
+                and tick_info
+                and tick_info.get("rounds")):
+            rounds = tick_info["rounds"]
+            warmup_end = tick_info.get(
+                "warmup_end_tick", 0)
+
+            all_ends = [
+                b["end"]
+                for b in rounds.values()]
+            all_starts = [
+                b["start"]
+                for b in rounds.values()]
+            if not all_starts or not all_ends:
+                return 64
+
+            comp_ticks = max(all_ends) - min(
+                all_starts)
+            total_ticks = max(
+                all_ends) - 0
+
+            print(
+                "[Parser] Auto-detect: "
+                "warmup_ticks={}, "
+                "comp_ticks={}, "
+                "total_ticks={}".format(
+                    warmup_end, comp_ticks,
+                    total_ticks))
+
+            best_tr = 64
+            best_diff = float("inf")
+
+            for cand in (64, 128, 256, 32):
+                # Video contains warmup?
+                dur_with = total_ticks / cand
+                dur_without = comp_ticks / cand
+
+                diff_with = abs(
+                    dur_with - video_dur)
+                diff_without = abs(
+                    dur_without - video_dur)
+
+                # Pick better match
+                diff = min(
+                    diff_with, diff_without)
+
+                print(
+                    "  {} tick: "
+                    "with_warmup={:.0f}s, "
+                    "no_warmup={:.0f}s, "
+                    "video={:.0f}s, "
+                    "diff={:.1f}s".format(
+                        cand,
+                        dur_with,
+                        dur_without,
+                        video_dur, diff))
+
+                if diff < best_diff:
+                    best_diff = diff
+                    best_tr = cand
+
+            print("[Parser] Auto → {}".format(
+                best_tr))
+            return best_tr
+
+        # No video → warmup fallback
         if (tick_info
                 and tick_info.get("rounds")):
             rounds = tick_info["rounds"]
             warmup_end = tick_info.get(
                 "warmup_end_tick", 0)
 
-            # No warmup → can't determine
             if warmup_end < 10:
-                print(
-                    "[Parser] No warmup data, "
-                    "defaulting to 64 tick")
+                print("[Parser] No warmup, "
+                      "default 64")
                 return 64
 
             all_ends = [
@@ -308,9 +453,8 @@ class DemoParserEngine:
             num_rounds = len(rounds)
 
             print(
-                "[Parser] Auto-detect: "
-                "warmup_ticks={}, "
-                "comp_ticks={}, "
+                "[Parser] Auto (warmup): "
+                "warmup={}, comp={}, "
                 "rounds={}".format(
                     warmup_end, comp_ticks,
                     num_rounds))
@@ -327,23 +471,16 @@ class DemoParserEngine:
                     total_s = comp_ticks / cand
 
                     score = 0
-
-                    # Warmup: 10-120s valid
                     if 10 <= warmup_s <= 120:
                         score += 5
                     else:
                         score -= 5
-
-                    # Avg round: 45-130s normal
                     if 45 <= avg_round_s <= 130:
                         score += 20
-                    elif (30 <= avg_round_s
-                          <= 180):
+                    elif 30 <= avg_round_s <= 180:
                         score += 5
                     else:
                         score -= 15
-
-                    # Total: 10-50 min
                     if 600 <= total_s <= 3000:
                         score += 10
                     elif 300 <= total_s <= 4800:
@@ -351,36 +488,82 @@ class DemoParserEngine:
                     else:
                         score -= 10
 
-                    print(
-                        "  {} tick: "
-                        "warmup={:.0f}s, "
-                        "avg_round={:.0f}s, "
-                        "total={:.0f}s "
-                        "(score={})".format(
-                            cand, warmup_s,
-                            avg_round_s,
-                            total_s, score))
-
                     if score > best_score:
                         best_score = score
                         best_tr = cand
 
-                print(
-                    "[Parser] Auto → "
-                    "{}".format(best_tr))
+                print("[Parser] Auto → {}".format(
+                    best_tr))
                 return best_tr
 
-        # Fallback
         return 64
+
+    # ═══════════════════════════════════════
+    #  Offset determination
+    # ═══════════════════════════════════════
+
+    def _determine_offset(self, warmup_end,
+                          round_bounds,
+                          tick_rate, video_dur):
+        """Determine video offset based on
+        whether video includes warmup.
+
+        If video_dur ≈ comp duration →
+            video不含热身 → offset = warmup_end
+        If video_dur ≈ comp + warmup →
+            video含热身 → offset = 0
+        """
+        if warmup_end <= 0:
+            return 0
+
+        if not round_bounds:
+            return warmup_end
+
+        all_ends = [b["end"]
+                    for b in round_bounds.values()]
+        all_starts = [b["start"]
+                      for b in round_bounds.values()]
+
+        warmup_s = warmup_end / tick_rate
+        comp_s = (max(all_ends) - min(all_starts)
+                  ) / tick_rate
+        total_s = warmup_s + comp_s
+
+        print("[Parser] Offset check: "
+              "warmup={:.1f}s, comp={:.1f}s, "
+              "total={:.1f}s, "
+              "video={:.1f}s".format(
+                  warmup_s, comp_s, total_s,
+                  video_dur))
+
+        if video_dur <= 0:
+            # No video info, assume
+            # no warmup (auto-record)
+            print("[Parser] No video, "
+                  "offset = warmup")
+            return warmup_end
+
+        # Compare video with and without warmup
+        diff_with = abs(total_s - video_dur)
+        diff_without = abs(comp_s - video_dur)
+
+        if diff_with < diff_without:
+            # Video includes warmup
+            print("[Parser] Video includes "
+                  "warmup, offset = 0")
+            return 0
+        else:
+            # Video excludes warmup
+            print("[Parser] Video excludes "
+                  "warmup, offset = "
+                  "{}".format(warmup_end))
+            return warmup_end
 
     # ═══════════════════════════════════════
     #  Tick data → offset + round bounds
     # ═══════════════════════════════════════
 
     def _parse_tick_info(self, parser):
-        """From tick data: warmup end tick,
-        round start/end ticks.
-        Uses is_warmup_period + total_rounds_played."""
         result = {
             "warmup_end_tick": 0,
             "rounds": {}}
@@ -400,7 +583,6 @@ class DemoParserEngine:
             print("[Parser] Tick rows: {}".format(
                 len(tick_df)))
 
-            # Warmup end
             warmup = tick_df[
                 tick_df["is_warmup_period"]
                 .astype(str).str.lower()
@@ -411,7 +593,6 @@ class DemoParserEngine:
             print("[Parser] Warmup end: tick {}".format(
                 result["warmup_end_tick"]))
 
-            # Round boundaries
             playing = tick_df[
                 ~tick_df["is_warmup_period"]
                 .astype(str).str.lower()
@@ -473,19 +654,16 @@ class DemoParserEngine:
                 result = fn()
                 if result is None:
                     continue
-
                 if isinstance(result,
                               pd.DataFrame):
                     if not result.empty:
                         return result
                     continue
-
                 if hasattr(result, "to_pandas"):
                     df = result.to_pandas()
                     if not df.empty:
                         return df
                     continue
-
                 if isinstance(result, list):
                     for item in result:
                         if (isinstance(item, tuple)
@@ -504,10 +682,8 @@ class DemoParserEngine:
                                 item, pd.DataFrame)
                               and not item.empty):
                             return item
-
             except Exception:
                 continue
-
         return pd.DataFrame()
 
     # ═══════════════════════════════════════
@@ -526,7 +702,6 @@ class DemoParserEngine:
         if not tc:
             return kills_df
 
-        # Primary: tick data
         if round_bounds:
             sorted_r = sorted(
                 round_bounds.items())
@@ -554,7 +729,6 @@ class DemoParserEngine:
                 counts))
             return df
 
-        # Fallback: events
         return self._assign_rounds_from_events(
             kills_df, rounds_df, round_end_df)
 
@@ -719,6 +893,9 @@ class DemoParserEngine:
         hurt_df = match.hurt_df
         info = match.info
 
+        def _fix(name):
+            return self._name_fix.get(name, name)
+
         total_rounds = max(
             info.score_ct + info.score_t, 1)
         info.competitive_rounds = total_rounds
@@ -742,12 +919,28 @@ class DemoParserEngine:
 
         coloring = self._detect_teams_from_kills(
             kills_df, att_col, vic_col)
-        print("[Parser] Teams: {}".format(
+        print("[Parser] Teams (kill): {}".format(
             coloring))
+
+        # Fill teams from tick data
+        if self._all_player_teams:
+            tn_to_ab = {}
+            for nm, tn in coloring.items():
+                if (nm in self._all_player_teams):
+                    tn_to_ab[self._all_player_teams[
+                        nm]] = tn
+                    break
+            if tn_to_ab:
+                for nm, tn in \
+                        self._all_player_teams.items():
+                    if (nm not in coloring
+                            and tn in tn_to_ab):
+                        coloring[nm] = tn_to_ab[tn]
 
         player_data = {}
 
         def ensure(name):
+            name = _fix(name)
             if not name:
                 return
             if name not in player_data:
@@ -761,8 +954,9 @@ class DemoParserEngine:
                 and not kills_df.empty:
             for _, row in kills_df.iterrows():
                 if att_col:
-                    attacker = self._safe_str(
-                        row.get(att_col))
+                    attacker = _fix(
+                        self._safe_str(
+                            row.get(att_col)))
                     if attacker:
                         ensure(attacker)
                         player_data[attacker][
@@ -776,21 +970,21 @@ class DemoParserEngine:
                                 player_data[
                                     attacker][
                                     "headshots"] += 1
-
                 if vic_col:
-                    victim = self._safe_str(
-                        row.get(vic_col))
+                    victim = _fix(
+                        self._safe_str(
+                            row.get(vic_col)))
                     if victim:
                         ensure(victim)
                         player_data[victim][
                             "deaths"] += 1
-
                 as_col = self._find_col(
                     kills_df.columns,
                     self.ASSISTER_COLS)
                 if as_col:
-                    assister = self._safe_str(
-                        row.get(as_col))
+                    assister = _fix(
+                        self._safe_str(
+                            row.get(as_col)))
                     if assister:
                         ensure(assister)
                         player_data[assister][
@@ -808,8 +1002,9 @@ class DemoParserEngine:
 
             if h_att and h_dmg:
                 for _, row in hurt_df.iterrows():
-                    a = self._safe_str(
-                        row.get(h_att))
+                    a = _fix(
+                        self._safe_str(
+                            row.get(h_att)))
                     if not a:
                         continue
                     ensure(a)
@@ -877,6 +1072,12 @@ class DemoParserEngine:
             key=lambda p: p["adr"],
             reverse=True)
 
+        print("[Parser] Stats A ({}): {}".format(
+            len(out_a),
+            [p["name"] for p in out_a]))
+        print("[Parser] Stats B ({}): {}".format(
+            len(out_b),
+            [p["name"] for p in out_b]))
         match.player_stats_a = out_a
         match.player_stats_b = out_b
 
@@ -944,8 +1145,6 @@ class DemoParserEngine:
             df.columns, self.VICTIM_COLS)
 
         if not att or not tic:
-            print("[Parser] Missing kill columns: "
-                  "{}".format(list(df.columns)))
             return pd.DataFrame()
 
         df = df.copy()
@@ -977,8 +1176,146 @@ class DemoParserEngine:
         df = df.sort_values(tic).reset_index(
             drop=True)
         return df
+    
+    def _resolve_user_teams(self, parser,
+                            steam_id):
+        """Get user's team_num per round
+        from tick data."""
+        try:
+            steam_id_int = int(steam_id)
+        except (ValueError, TypeError):
+            print("[Parser] Invalid steam_id: "
+                  "{}".format(steam_id))
+            return
 
-    def _extract_scores(self, info, redf):
+        try:
+            tick_df = parser.parse_ticks(
+                ["is_warmup_period",
+                 "total_rounds_played",
+                 "team_num"])
+            if tick_df is None or tick_df.empty:
+                return
+
+            user_df = tick_df[
+                tick_df["steamid"]
+                == steam_id_int].copy()
+            if user_df.empty:
+                print("[Parser] No tick data "
+                      "for steamid {}".format(
+                          steam_id))
+                return
+
+            user_df["is_warmup"] = (
+                user_df["is_warmup_period"]
+                .astype(str).str.lower()
+                .isin(["true", "1", "1.0"]))
+
+            playing = user_df[
+                ~user_df["is_warmup"]]
+
+            for counter, group in \
+                    playing.groupby(
+                        "total_rounds_played"):
+                rnd = int(counter) + 1
+                mode = (group["team_num"]
+                        .mode())
+                if not mode.empty:
+                    self._user_teams[rnd] = (
+                        int(mode.iloc[0]))
+
+            print("[Parser] User teams: {}".format(
+                {k: {2: "CT", 3: "T"}.get(v, "?")
+                 for k, v in sorted(
+                     self._user_teams.items())}))
+
+            # Extract user's in-game name
+            names = user_df["name"].dropna()
+            if not names.empty:
+                uname = str(
+                    names.mode().iloc[0]).strip()
+                if uname and uname != "nan":
+                    self._user_name = uname
+                    print("[Parser] User name: "
+                          "{}".format(uname))
+            # Resolve ALL players' teams
+            # using steamid to avoid duplicates
+            try:
+                full_df = tick_df.copy()
+                full_df["_warmup"] = (
+                    full_df["is_warmup_period"]
+                    .astype(str).str.lower()
+                    .isin(["true", "1", "1.0"]))
+
+                # Build name fix: warmup name →
+                # competitive name
+                for sid, grp in full_df.groupby(
+                        "steamid"):
+                    sid_str = str(sid).strip()
+                    if (not sid_str
+                            or sid_str == "nan"):
+                        continue
+                    comp = grp[
+                        ~grp["_warmup"]]["name"
+                    ].dropna()
+                    all_n = grp["name"].dropna()
+                    if comp.empty or all_n.empty:
+                        continue
+                    comp_name = str(
+                        comp.mode().iloc[0]
+                    ).strip()
+                    if (not comp_name
+                            or comp_name == "nan"):
+                        continue
+                    for nm in all_n.unique():
+                        nm_s = str(nm).strip()
+                        if (nm_s and nm_s != "nan"
+                                and nm_s
+                                != comp_name):
+                            self._name_fix[nm_s] = (
+                                comp_name)
+
+                if self._name_fix:
+                    print("[Parser] Name fix: "
+                          "{}".format(
+                              self._name_fix))
+
+                # Teams by steamid (deduped)
+                for sid, grp in full_df.groupby(
+                        "steamid"):
+                    comp = grp[
+                        ~grp["_warmup"]]
+                    if comp.empty:
+                        continue
+                    mode = comp[
+                        "team_num"].mode()
+                    if mode.empty:
+                        continue
+                    tn = int(mode.iloc[0])
+                    if tn not in (2, 3):
+                        continue
+                    nm_mode = comp[
+                        "name"].mode()
+                    if nm_mode.empty:
+                        continue
+                    nm_str = str(
+                        nm_mode.iloc[0]).strip()
+                    if (nm_str
+                            and nm_str != "nan"):
+                        self._all_player_teams[
+                            nm_str] = tn
+
+            except Exception:
+                pass
+
+        except Exception as e:
+            print("[Parser] User teams error: "
+                  "{}".format(e))
+
+    def _extract_scores(self, info, redf,
+                        steam_id=""):
+        """Extract score from user's
+        perspective using SteamID."""
+
         winner_col = None
         for col in ("winner", "winner_team",
                     "winning_team"):
@@ -987,16 +1324,61 @@ class DemoParserEngine:
                 break
         if not winner_col:
             return
-        ct, t = 0, 0
+
+        # Build round winner dict, skip empty
+        round_winners = {}
         for _, row in redf.iterrows():
-            w = str(
-                row.get(winner_col, "")).upper()
-            if "CT" in w:
-                ct += 1
-            elif "T" in w:
-                t += 1
-        info.score_ct = ct
-        info.score_t = t
+            rnd = int(row.get("round", 0))
+            winner = str(
+                row.get(winner_col, "")
+            ).strip()
+            if rnd > 0 and winner:
+                round_winners[rnd] = winner
+
+        if not round_winners:
+            return
+
+        # Fallback: CT/T count if no user data
+        if not self._user_teams:
+            ct = sum(1 for w in
+                     round_winners.values()
+                     if w == "CT")
+            t = sum(1 for w in
+                    round_winners.values()
+                    if w == "T")
+            info.score_ct = ct
+            info.score_t = t
+            print("[Parser] Score (fallback): "
+                  "{}-{}".format(ct, t))
+            return
+
+        # User perspective score
+        user_score = 0
+        opp_score = 0
+        for rnd in sorted(
+                round_winners.keys()):
+            winner = round_winners[rnd]
+            user_side = {2: "CT", 3: "T"}.get(
+                self._user_teams.get(rnd, 0),
+                "")
+            if not user_side:
+                continue
+
+            if winner == user_side:
+                user_score += 1
+            else:
+                opp_score += 1
+
+            # Match ends at 13
+            if (user_score >= 13
+                    or opp_score >= 13):
+                break
+
+        info.score_ct = user_score
+        info.score_t = opp_score
+        print("[Parser] Score (user): "
+              "{}-{}".format(user_score,
+                             opp_score))
 
     @staticmethod
     def get_version_info():

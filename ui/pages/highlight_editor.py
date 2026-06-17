@@ -31,6 +31,7 @@ class HighlightEditorPage(QWidget):
         self._player_buttons = {}
         self._btn_all = None
         self.empty_label = None
+        self._user_player = ""
         self._setup_ui()
 
     def _setup_ui(self):
@@ -260,7 +261,8 @@ class HighlightEditorPage(QWidget):
 
     def set_highlights(self, highlights,
                        video_path="",
-                       all_players=None):
+                       all_players=None,
+                       user_player=""):
         """
         Set highlights and full player list.
 
@@ -273,6 +275,7 @@ class HighlightEditorPage(QWidget):
         self._all_highlights = highlights
         self._source_video = video_path
         self._raw_all_players = all_players or []
+        self._user_player = user_player
         self._extract_players()
         self._refresh_player_bar()
         self._apply_filter()
@@ -315,6 +318,11 @@ class HighlightEditorPage(QWidget):
 
         self._players = dict(players)
         self._selected_players.clear()
+        if (self._user_player
+                and self._user_player
+                in self._players):
+            self._selected_players.add(
+                self._user_player)
 
     def _refresh_player_bar(self):
         while (self.player_btn_layout.count() > 0):
@@ -332,10 +340,14 @@ class HighlightEditorPage(QWidget):
         self.player_bar.show()
 
         # "All" button
+        all_checked = (
+            not self._selected_players
+            or len(self._selected_players)
+            >= len(self._players))
         btn_all = QPushButton(
             "全部 ({})".format(len(self._players)))
         btn_all.setCheckable(True)
-        btn_all.setChecked(True)
+        btn_all.setChecked(all_checked)
         btn_all.setFixedHeight(30)
         btn_all.setCursor(
             Qt.CursorShape.PointingHandCursor)
@@ -370,6 +382,8 @@ class HighlightEditorPage(QWidget):
         for name, count in sorted_players:
             btn = self._make_player_button(
                 name, count)
+            btn.setChecked(
+                name in self._selected_players)
             btn.clicked.connect(
                 lambda checked, n=name:
                 self._on_player_clicked(
