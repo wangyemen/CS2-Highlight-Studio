@@ -305,6 +305,10 @@ class SettingsPage(QWidget):
             + str(port))
 
     def _test_obs(self):
+        self._obs_status.setText("连接中...")
+        self._obs_status.setStyleSheet(
+            "font-size: 12px; color: #ff9f43; "
+            "background: transparent;")
         try:
             from core.obs_controller import \
                 OBSController
@@ -315,22 +319,25 @@ class SettingsPage(QWidget):
                 self.field_obs_password.text())
             if ok:
                 self._obs_status.setText(
-                    "\u2705 \u8fde\u63a5\u6210\u529f")
+                    "✅ 连接成功")
                 self._obs_status.setStyleSheet(
                     "font-size: 12px; "
                     "color: #00e68a; "
                     "background: transparent;")
                 test.disconnect()
             else:
+                err = getattr(
+                    test, 'last_error',
+                    '未知错误')
                 self._obs_status.setText(
-                    "\u274c \u8fde\u63a5\u5931\u8d25")
+                    "❌ 连接失败: " + err)
                 self._obs_status.setStyleSheet(
                     "font-size: 12px; "
                     "color: #ff3b5c; "
                     "background: transparent;")
         except Exception as e:
             self._obs_status.setText(
-                "\u274c " + str(e)[:60])
+                "❌ " + str(e))
             self._obs_status.setStyleSheet(
                 "font-size: 12px; color: #ff3b5c; "
                 "background: transparent;")

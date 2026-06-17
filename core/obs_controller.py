@@ -48,8 +48,10 @@ class OBSController:
 
     def connect(self, host: str = None, port: int = None, password: str = None):
         """连接到 OBS WebSocket"""
+        self.last_error = ""
         if not HAS_OBSWS:
             self.state.connected = False
+            self.last_error = "未安装 obsws_python 库"
             self._notify()
             return False
 
@@ -64,16 +66,20 @@ class OBSController:
             # 测试连接
             self._client.get_version()
             self.state.connected = True
+            self.last_error = ""
             self._update_state()
             self._start_polling()
             self._notify()
             return True
         except Exception as e:
-            print(f"OBS 连接失败: {e}")
+            err = f"{type(e).__name__}: {e}"
+            print(f"OBS 连接失败: {err}")
             self.state.connected = False
+            self.last_error = err
+            self._client = None
             self._notify()
             return False
-
+        
     def disconnect(self):
         """断开 OBS 连接"""
         self._stop_polling()

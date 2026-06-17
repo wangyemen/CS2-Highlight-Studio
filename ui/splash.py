@@ -50,7 +50,7 @@ def _create_splash_pixmap():
     p.setFont(QFont("Consolas", 10))
     p.drawText(0, 145, w, 30,
                Qt.AlignmentFlag.AlignCenter,
-               "v1.0.260612")
+               "v1.1.260612")
 
     p.setPen(QPen(QColor("#00e68a"), 2))
     p.drawArc(180, 50, 140, 140, 30 * 16, 60 * 16)
